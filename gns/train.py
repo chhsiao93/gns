@@ -32,6 +32,7 @@ flags.DEFINE_string('output_path', 'rollouts/', help='The path for saving output
 flags.DEFINE_string('output_filename', 'rollout', help='Base name for saving the rollout')
 flags.DEFINE_string('model_file', None, help=('Model filename (.pt) to resume from. Can also use "latest" to default to newest file.'))
 flags.DEFINE_string('train_state_file', 'train_state.pt', help=('Train state filename (.pt) to resume from. Can also use "latest" to default to newest file.'))
+flags.DEFINE_string('fe_path', 'FE/', help='The path for the Function Encoder model and trajetory examples.')
 
 flags.DEFINE_integer('ntraining_steps', int(2E7), help='Number of training steps.')
 flags.DEFINE_integer('validation_interval', None, help='Validation interval. Set `None` if validation loss is not needed')
@@ -553,6 +554,7 @@ def _get_simulator(
       nparticle_types=NUM_PARTICLE_TYPES,
       particle_type_embedding_size=16,
       boundary_clamp_limit=metadata["boundary_augment"] if "boundary_augment" in metadata else 1.0,
+      fe_path=FLAGS.fe_path,
       device=device)
 
   return simulator

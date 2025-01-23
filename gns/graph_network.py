@@ -414,7 +414,7 @@ class EncodeProcessDecode(nn.Module):
         x: Particle state representation as a torch tensor with shape
           (nparticles, nnode_out_features)
     """
-    x, edge_features = self._encoder(x, edge_features)
+    # x, edge_features = self._encoder(x, edge_features)
     x, edge_features = self._processor(x, edge_index, edge_features)
-    x = self._decoder(x)
+    # x = self._decoder(x)
     return x

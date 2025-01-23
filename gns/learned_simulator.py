@@ -4,7 +4,8 @@ import numpy as np
 from gns import graph_network
 from torch_geometric.nn import radius_graph
 from typing import Dict
-
+from FunctionEncoder import FunctionEncoder
+from gns.mpmDataset import SandPairDataset
 
 class LearnedSimulator(nn.Module):
   """Learned simulator from https://arxiv.org/pdf/2002.09405.pdf."""
@@ -24,6 +25,7 @@ class LearnedSimulator(nn.Module):
           nparticle_types: int,
           particle_type_embedding_size: int,
           boundary_clamp_limit: float = 1.0,
+          fe_path: str = "./gns/fe/",
           device="cpu"
   ):
     """Initializes the model.
@@ -55,23 +57,70 @@ class LearnedSimulator(nn.Module):
     self._normalization_stats = normalization_stats
     self._nparticle_types = nparticle_types
     self._boundary_clamp_limit = boundary_clamp_limit
-
-    # Particle type embedding has shape (9, 16)
-    self._particle_type_embedding = nn.Embedding(
-        nparticle_types, particle_type_embedding_size)
+    self._fe_path = fe_path
+    # # Particle type embedding has shape (9, 16)
+    # self._particle_type_embedding = nn.Embedding(
+    #     nparticle_types, particle_type_embedding_size)
 
     # Initialize the EncodeProcessDecode
     self._encode_process_decode = graph_network.EncodeProcessDecode(
         nnode_in_features=nnode_in,
         nnode_out_features=particle_dimensions,
         nedge_in_features=nedge_in,
-        latent_dim=latent_dim,
+        latent_dim=particle_dimensions,
         nmessage_passing_steps=nmessage_passing_steps,
         nmlp_layers=nmlp_layers,
         mlp_hidden_dim=mlp_hidden_dim)
 
     self._device = device
-
+    self.load_fe_model(self._fe_path)
+    
+  def load_fe_model(self, logdir):
+    # TODO: remove the hard code
+    # load the model
+    model = FunctionEncoder(input_size=(33,),
+                            output_size=(2,),
+                            data_type="deterministic",
+                            n_basis=21,
+                            model_type="MLP",
+                            method="least_squares",
+                            use_residuals_method=False).to(self._device)
+    model.load_state_dict(torch.load(f"{logdir}/model.pth",weights_only=True))
+    self._fe_model = model
+    self._fe_example_xs, self._fe_example_ys = self.load_fe_example(logdir)
+    
+  def load_fe_example(self, logdir):
+    dataset = SandPairDataset(path=self._fe_path,
+                              n_input_sequence=6, dim=2,
+                              n_functions=1,
+                              n_examples=50,
+                              n_queries=250,
+                              device=self._device,
+                              dtype=torch.float32)
+    n_trajectory = len(dataset.data)
+    n_frames_per_traj = len(dataset.data[0][0])
+    # make example_xs and example_ys
+    example_inputs = []
+    example_outputs = []
+    # read all example trajectories
+    for example_idx in range(n_trajectory):
+        trajectory = dataset.data[example_idx]
+         # get input and output
+        input, output = dataset.get_data_from_trajectory(trajectory)
+        example_inputs.append(input)
+        example_outputs.append(output)
+    
+    example_inputs = np.stack(example_inputs).reshape(1, -1, *dataset.input_size)
+    example_outputs = np.stack(example_outputs).reshape(1, -1, *dataset.output_size)
+    example_xs = torch.tensor(example_inputs, dtype=dataset.dtype, device=dataset.device)
+    example_ys = torch.tensor(example_outputs, dtype=dataset.dtype, device=dataset.device)
+    
+    # check dimension
+    assert example_xs.shape == (1,2*n_trajectory*(n_frames_per_traj-dataset.n_input_sequence), 33), f"get {example_xs.shape}"
+    assert example_ys.shape == (1,2*n_trajectory*(n_frames_per_traj-dataset.n_input_sequence), 2), f"get {example_ys.shape}"
+    
+    return example_xs, example_ys
+    
   def forward(self):
     """Forward hook runs on class instantiation"""
     pass
@@ -134,6 +183,7 @@ class LearnedSimulator(nn.Module):
     senders, receivers = self._compute_graph_connectivity(
         most_recent_position, nparticles_per_example, self._connectivity_radius)
     node_features = []
+    node_acceleration = torch.zeros_like(most_recent_position) # (n_nodes, 2)
 
     # Normalized velocity sequence, merging spatial an time axis.
     velocity_stats = self._normalization_stats["velocity"]
@@ -165,11 +215,11 @@ class LearnedSimulator(nn.Module):
 
     # Particle type
     if self._nparticle_types > 1:
-      particle_type_embeddings = self._particle_type_embedding(
-          particle_types)
-      node_features.append(particle_type_embeddings)
+      # particle_type_embeddings = self._particle_type_embedding(
+      #     particle_types)
+      node_features.append(particle_types.view(-1, 1)) # CHANGE: directly use particle_types. TODO: use fixed embedding
     # Final node_features shape (nparticles, 30) for 2D (if material_property is not valid in training example)
-    # 30 = 10 (5 velocity sequences*dim) + 4 boundaries + 16 particle embedding
+    # 15 = 10 (5 velocity sequences*dim) + 4 boundaries + 1 particle embedding
 
     # Material property
     if material_property is not None:
@@ -180,7 +230,8 @@ class LearnedSimulator(nn.Module):
 
     # Collect edge features.
     edge_features = []
-
+    edge_features.append(torch.cat(node_features, dim=-1)[senders, :])
+    edge_features.append(torch.cat(node_features, dim=-1)[receivers, :])
     # Relative displacement and distances normalized to radius
     # with shape (nedges, 2)
     # normalized_relative_displacements = (
@@ -201,10 +252,18 @@ class LearnedSimulator(nn.Module):
     normalized_relative_distances = torch.norm(
         normalized_relative_displacements, dim=-1, keepdim=True)
     edge_features.append(normalized_relative_distances)
+    edge_features = torch.cat(edge_features, dim=-1)
+    # add new axis to edge features
+    edge_features = edge_features.unsqueeze(0) # (1, n_edges, 33)
+    # getting edge acceleration from FE 
+    with torch.no_grad():
+      # predict
+      edge_acceleration = self._fe_model.predict_from_examples(self._fe_example_xs, self._fe_example_ys, edge_features , method="least_squares")
+      edge_acceleration = edge_acceleration.squeeze(0) # (n_edges, 2)
 
-    return (torch.cat(node_features, dim=-1),
+    return (node_acceleration,
             torch.stack([senders, receivers]),
-            torch.cat(edge_features, dim=-1))
+            edge_acceleration)
 
   def _decoder_postprocessor(
           self,
