@@ -129,7 +129,7 @@ def predict(device: str):
   """
   # Read metadata
   metadata = reading_utils.read_metadata(FLAGS.data_path, "rollout")
-  simulator = _get_simulator(metadata, FLAGS.noise_std, FLAGS.noise_std, device)
+  simulator = _get_simulator(metadata, FLAGS.noise_std, FLAGS.noise_std, device, FLAGS.fe_path)
 
   # Load simulator
   if os.path.exists(FLAGS.model_path + FLAGS.model_file):
@@ -287,11 +287,11 @@ def train(rank, flags, world_size, device):
 
   # Get simulator and optimizer
   if device == torch.device("cuda"):
-    serial_simulator = _get_simulator(metadata, flags["noise_std"], flags["noise_std"], rank)
+    serial_simulator = _get_simulator(metadata, flags["noise_std"], flags["noise_std"], rank, flags['fe_path'])
     simulator = DDP(serial_simulator.to(rank), device_ids=[rank], output_device=rank)
     optimizer = torch.optim.Adam(simulator.parameters(), lr=flags["lr_init"]*world_size)
   else:
-    simulator = _get_simulator(metadata, flags["noise_std"], flags["noise_std"], device)
+    simulator = _get_simulator(metadata, flags["noise_std"], flags["noise_std"], device, flags['fe_path'])
     optimizer = torch.optim.Adam(simulator.parameters(), lr=flags["lr_init"] * world_size)
 
   # Initialize training state
@@ -505,7 +505,8 @@ def _get_simulator(
         metadata: json,
         acc_noise_std: float,
         vel_noise_std: float,
-        device: torch.device) -> learned_simulator.LearnedSimulator:
+        device: torch.device,
+        fe_path: str) -> learned_simulator.LearnedSimulator:
   """Instantiates the simulator.
 
   Args:
@@ -554,7 +555,7 @@ def _get_simulator(
       nparticle_types=NUM_PARTICLE_TYPES,
       particle_type_embedding_size=16,
       boundary_clamp_limit=metadata["boundary_augment"] if "boundary_augment" in metadata else 1.0,
-      fe_path=FLAGS.fe_path,
+      fe_path=fe_path,
       device=device)
 
   return simulator
