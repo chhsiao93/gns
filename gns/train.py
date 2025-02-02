@@ -543,7 +543,7 @@ def _get_simulator(
       particle_dimensions=metadata['dim'],
       nnode_in=nnode_in,
       nedge_in=nedge_in,
-      latent_dim=128,
+      latent_dim=2,
       nmessage_passing_steps=10,
       nmlp_layers=2,
       mlp_hidden_dim=128,
