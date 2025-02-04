@@ -108,7 +108,7 @@ class Encoder(nn.Module):
         (nparticles, nedge_input_features)
 
     """
-    return self.node_fn(x), self.edge_fn(edge_features)
+    return self.node_fn(x) #, self.edge_fn(edge_features)
 
 
 class InteractionNetwork(MessagePassing):
@@ -373,8 +373,8 @@ class EncodeProcessDecode(nn.Module):
     """
     super(EncodeProcessDecode, self).__init__()
     self._encoder = Encoder(
-        nnode_in_features=nnode_in_features,
-        nnode_out_features=latent_dim,
+        nnode_in_features=15,
+        nnode_out_features=2,
         nedge_in_features=nedge_in_features,
         nedge_out_features=latent_dim,
         nmlp_layers=nmlp_layers,
@@ -414,7 +414,7 @@ class EncodeProcessDecode(nn.Module):
         x: Particle state representation as a torch tensor with shape
           (nparticles, nnode_out_features)
     """
-    # x, edge_features = self._encoder(x, edge_features)
+    x = self._encoder(x, edge_features)
     x, edge_features = self._processor(x, edge_index, edge_features)
     # x = self._decoder(x)
     return x

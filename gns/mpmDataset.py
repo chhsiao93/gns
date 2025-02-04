@@ -192,7 +192,8 @@ class SandPairDataset(BaseDataset):
         dist_to_lower_boudary = current_position - boundary[:, 0]
         dist_to_upper_boudary = boundary[:, 1] - current_position
         dist_to_boundary = np.concatenate([dist_to_lower_boudary, dist_to_upper_boudary], axis=-1)
-        assert dist_to_boundary.shape == (n_particles, dim * 2) # should be (n_particles, 2*dim)
+        normalized_dist_to_boundary = np.clip(dist_to_boundary / self.connectivity_radius, -1.0, 1.0)
+        assert normalized_dist_to_boundary.shape == (n_particles, dim * 2) # should be (n_particles, 2*dim)
         
         # compute velocity
         velocity_sequence= position_squence[1:] - position_squence[:-1]
@@ -213,15 +214,13 @@ class SandPairDataset(BaseDataset):
         velocity_sequence = velocity_sequence.reshape(n_particles, -1) # (n_particles, (n_input_sequence-1)*dim)
         
         # compute distance between the pair
-        pair_rel_position = current_position[1] - current_position[0]
-        pair_rel_distance = np.linalg.norm(pair_rel_position)
+        normalized_relative_displacements = (current_position[1] - current_position[0]) / self.connectivity_radius
         # normalize distance
-        pair_rel_position = pair_rel_position / self.connectivity_radius
-        pair_rel_distance = pair_rel_distance / self.connectivity_radius
+        normalized_relative_distances = np.linalg.norm(normalized_relative_displacements)
         
         node_feature_1 = np.concatenate((velocity_sequence[0],  dist_to_boundary[0], np.array([particle_types[0]])), axis=-1)
         node_feature_2 = np.concatenate((velocity_sequence[1],  dist_to_boundary[1], np.array([particle_types[1]])), axis=-1)
-        edge_feature = np.concatenate((pair_rel_position, np.array([pair_rel_distance])), axis=-1)
+        edge_feature = np.concatenate((normalized_relative_displacements, np.array([normalized_relative_distances])), axis=-1)
         input = np.concatenate((node_feature_1, node_feature_2,  edge_feature), axis=-1)
         if next_position is None:
             # if there is no next position, meaning we only want input features

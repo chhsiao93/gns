@@ -88,6 +88,7 @@ class LearnedSimulator(nn.Module):
     model.load_state_dict(torch.load(f"{logdir}/model.pth",weights_only=True))
     self._fe_model = model
     self._fe_example_xs, self._fe_example_ys = self.load_fe_example(logdir)
+    self.representations, _ = self._fe_model.compute_representation(self._fe_example_xs, self._fe_example_ys, method="least_squares")
     
   def load_fe_example(self, logdir):
     dataset = SandPairDataset(path=self._fe_path,
@@ -183,7 +184,8 @@ class LearnedSimulator(nn.Module):
     senders, receivers = self._compute_graph_connectivity(
         most_recent_position, nparticles_per_example, self._connectivity_radius)
     node_features = []
-    node_acceleration = torch.zeros_like(most_recent_position) # (n_nodes, 2)
+    # node_acceleration = torch.zeros_like(most_recent_position) # (n_nodes, 2)
+    node_bd = []
 
     # Normalized velocity sequence, merging spatial an time axis.
     velocity_stats = self._normalization_stats["velocity"]
@@ -212,6 +214,7 @@ class LearnedSimulator(nn.Module):
     # The distance to 4 boundaries (top/bottom/left/right)
     # node_features shape (nparticles, 10+4)
     node_features.append(normalized_clipped_distance_to_boundaries)
+    node_bd.append(normalized_clipped_distance_to_boundaries)
 
     # Particle type
     if self._nparticle_types > 1:
@@ -258,10 +261,11 @@ class LearnedSimulator(nn.Module):
     # getting edge acceleration from FE 
     with torch.no_grad():
       # predict
-      edge_acceleration = self._fe_model.predict_from_examples(self._fe_example_xs, self._fe_example_ys, edge_features , method="least_squares")
+      # edge_acceleration = self._fe_model.predict_from_examples(self._fe_example_xs, self._fe_example_ys, edge_features , method="least_squares")
+      edge_acceleration = self._fe_model.predict(edge_features, self.representations)
       edge_acceleration = edge_acceleration.squeeze(0) # (n_edges, 2)
 
-    return (node_acceleration,
+    return (torch.cat(node_features, dim=-1),
             torch.stack([senders, receivers]),
             edge_acceleration)
 
