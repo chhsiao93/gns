@@ -25,6 +25,7 @@ class LearnedSimulator(nn.Module):
         particle_type_embedding_size: int,
         boundary_clamp_limit: float = 1.0,
         device="cpu",
+        rigid_body_id: int = 0, # default rigid body id
     ):
         """Initializes the model.
 
@@ -73,6 +74,7 @@ class LearnedSimulator(nn.Module):
         )
 
         self._device = device
+        self._rigid_body_id = rigid_body_id
 
     def forward(self):
         """Forward hook runs on class instantiation"""
@@ -223,7 +225,7 @@ class LearnedSimulator(nn.Module):
         )
 
     def _decoder_postprocessor(
-        self, normalized_acceleration: torch.tensor, position_sequence: torch.tensor
+        self, normalized_acceleration: torch.tensor, position_sequence: torch.tensor, particle_types: torch.tensor,
     ) -> torch.tensor:
         """Compute new position based on acceleration and current position.
         The model produces the output in normalized space so we apply inverse
@@ -232,6 +234,7 @@ class LearnedSimulator(nn.Module):
         Args:
           normalized_acceleration: Normalized acceleration (nparticles, dim).
           position_sequence: Position sequence of shape (nparticles, dim).
+          particle_types: Particle types with shape (nparticles).
 
         Returns:
           torch.tensor: New position of the particles.
@@ -247,6 +250,24 @@ class LearnedSimulator(nn.Module):
         # a dt=1 corresponding to the size of the finite difference.
         most_recent_position = position_sequence[:, -1]
         most_recent_velocity = most_recent_position - position_sequence[:, -2]
+        
+        # Modify for rigid body by summing acceleration over all particles in the rigid body
+        rigid_body_mask = (
+            (particle_types == self._rigid_body_id)
+            .clone()
+            .detach()
+            .to(self._device)
+        )
+        rigid_body_mask = rigid_body_mask.bool()[:, None].expand(
+            -1, most_recent_position.shape[-1]
+        )
+        rigid_acceleration = torch.sum(
+            acceleration * rigid_body_mask, dim=0, keepdim=True
+        )
+        rigid_mass = torch.sum(rigid_body_mask[:, 0].float()) + 1e-8  # avoid div by zero
+        acceleration = torch.where(
+            rigid_body_mask, rigid_acceleration / rigid_mass, acceleration
+        ) 
 
         # TODO: Fix dt
         new_velocity = most_recent_velocity + acceleration  # * dt = 1
@@ -287,7 +308,7 @@ class LearnedSimulator(nn.Module):
             node_features, edge_index, edge_features
         )
         next_positions = self._decoder_postprocessor(
-            predicted_normalized_acceleration, current_positions
+            predicted_normalized_acceleration, current_positions, particle_types
         )
         return next_positions
 
