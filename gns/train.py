@@ -660,8 +660,8 @@ def train(rank, cfg, world_size, device, verbose, use_dist):
 
                     avg_loss = epoch_loss / steps_this_epoch
                     pbar.set_postfix(
-                        loss=f"{train_loss:.2f}",
-                        avg_loss=f"{avg_loss:.2f}",
+                        loss=f"{train_loss:.2e}",
+                        avg_loss=f"{avg_loss:.2e}",
                         lr=f"{lr_new:.2e}",
                     )
                     pbar.update(1)
